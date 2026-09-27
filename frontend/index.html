@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Music Library Diff</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <h1>Music Library Diff</h1>
+      <p class="subtitle">Compara duas bibliotecas de música em PCs diferentes, sem copiar, mover ou apagar nada.</p>
+    </header>
+
+    <section class="panel" id="form-panel">
+      <div class="library-fields">
+        <div class="field field-a">
+          <label for="library-a"><span class="dot dot-a"></span>Biblioteca A · pasta local</label>
+          <input id="library-a" type="text" placeholder="D:\Music" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="field field-b">
+          <label for="library-b"><span class="dot dot-b"></span>Biblioteca B · local ou rede</label>
+          <input id="library-b" type="text" placeholder="\\PC-DESKTOP\Music" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+      <button id="analyze-btn" type="button">Analisar</button>
+      <p id="form-error" class="error-text" hidden></p>
+    </section>
+
+    <section class="panel" id="progress-panel" hidden>
+      <p id="progress-message" class="progress-message">Preparando...</p>
+      <div class="progress-track">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+      <p id="progress-count" class="muted"></p>
+    </section>
+
+    <section class="panel" id="results-panel" hidden>
+      <div class="summary-row" id="summary-row"></div>
+
+      <div id="errors-banner" class="errors-banner" hidden></div>
+
+      <div class="tabs" id="tabs"></div>
+
+      <ul class="results-list" id="results-list"></ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

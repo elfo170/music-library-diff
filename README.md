@@ -1,6 +1,6 @@
 # Music Library Diff
 
-Ferramenta local para Windows que compara duas bibliotecas de música guardadas em dois PCs da mesma rede, sem copiar, mover, renomear ou apagar nenhum arquivo.
+Ferramenta local para Windows que compara duas bibliotecas de música guardadas em dois PCs da mesma rede, A análise é somente leitura. Depois dela, você pode filtrar os resultados e executar operações em lote (copiar entre os PCs e apagar), sempre com confirmação explícita.
 
 ## Requisitos
 
@@ -47,6 +47,32 @@ Clique em **Analisar** e acompanhe o progresso. Ao final, os resultados aparecem
 
 O hash e a metadata de cada arquivo escaneado ficam guardados em cache local (SQLite, em `data/music_library_diff.db`, criado automaticamente). Em análises futuras, se um arquivo não mudou (mesmo tamanho e mesma data de modificação), o hash e a metadata são reaproveitados do cache em vez de recalculados — o que torna novas análises bem mais rápidas em bibliotecas grandes.
 
+## Operações em lote (CRTD)
+
+Sobre o resultado da análise você pode buscar, filtrar, selecionar e operar em lote. Não existe "update": arquivos nunca são editados ou renomeados.
+
+**Filtros e busca** (combináveis, aplicados na hora): texto (artista, título, álbum, caminho), pasta, formato, sample rate, bit depth, faixa de bitrate (kbps), tamanho (MB) e duração (min), além das abas de categoria. O seletor "lado" define se os filtros valem para A, B ou qualquer um. Há ordenação por título, artista, formato, bitrate, tamanho, duração e caminho, e "Selecionar todos os filtrados".
+
+**Copiar (A para B ou B para A)**
+- Mantém a mesma subpasta relativa à raiz da biblioteca de origem, criando as pastas que faltarem no destino.
+- Grava num arquivo temporário (`.mld-tmp-*.tmp`), confere o hash (BLAKE2b) e só então renomeia. Se o hash não bater, a cópia é descartada.
+- Se o arquivo já existir no destino, a tela pergunta caso a caso: pular, sobrescrever ou manter os dois (o novo vira `nome (2).ext`). Há "aplicar a todos".
+- Itens que já são idênticos no destino ou sem arquivo na origem são ignorados.
+
+**Apagar (de A, de B ou de ambos)**
+- Pasta local: vai para a **lixeira** do Windows.
+- Pasta de rede (UNC ou unidade mapeada): o Windows não tem lixeira, então a exclusão é **permanente**. A confirmação destaca essa contagem.
+
+**Comparar duplicatas**: nos itens com arquivo nos dois lados, o botão "Comparar" mostra os dois lado a lado (formato, bitrate, sample rate, bit depth, tamanho, duração, caminho). Você escolhe qual manter e o outro é apagado pela regra acima.
+
+**Segurança**
+- Toda operação passa por um plano prévio e uma tela de confirmação com a lista do que será feito.
+- Só se opera em arquivos que pertencem à análise e estão dentro da raiz da biblioteca correspondente.
+- Cada operação fica registrada no SQLite (`operations` / `operation_items`), e os resultados na tela são recalculados ao final, sem precisar reanalisar.
+- Só uma operação roda por vez.
+
+**Permissão de escrita**: para copiar para ou apagar no PC B, o compartilhamento precisa de permissão de **Alteração** (leitura e gravação) para o usuário usado, não só leitura.
+
 ## Rodar os testes
 
 ```powershell
@@ -75,15 +101,16 @@ backend/
 ├── comparator.py           # COMPARE — classifica cada par em uma categoria
 ├── db.py                   # persistência SQLite + cache incremental
 ├── scan_service.py         # orquestra SCAN -> COMPARE em background, com progresso
+├── operations.py           # CRTD — plano, cópia verificada, lixeira/exclusão, recálculo
 └── app.py                  # DISPLAY — API HTTP (Flask) + serve o frontend
 frontend/                   # UI web local (HTML/CSS/JS puro, sem build step)
 tests/                      # testes automatizados (pytest)
 ```
 
-O domínio separa claramente SCAN / COMPARE / DISPLAY de uma futura camada **SYNC** (não implementada neste MVP). Cada análise fica registrada no banco (`scans` / `scan_matches`) de forma que uma futura tela de sincronização (`PC A → PC B`, `PC B → PC A`, bidirecional) possa ser construída sobre os resultados já classificados, sem reescrever o núcleo de comparação.
+O domínio separa SCAN / COMPARE / DISPLAY / OPERATIONS. Uma sincronização bidirecional automática (**SYNC**) continua fora do escopo; as operações em lote são manuais. Cada análise fica registrada no banco (`scans` / `scan_matches`) de forma que uma futura tela de sincronização (`PC A → PC B`, `PC B → PC A`, bidirecional) possa ser construída sobre os resultados já classificados, sem reescrever o núcleo de comparação.
 
 ## Segurança
 
-- O MVP é somente leitura: nenhum arquivo de música é alterado, movido, renomeado, copiado ou apagado.
+- A análise é somente leitura. Cópia e exclusão só acontecem por ação explícita e confirmada do usuário (ver "Operações em lote").
 - Nenhuma credencial de rede é solicitada ou armazenada; a aplicação usa o acesso SMB que o Windows já tiver configurado.
 - Nenhum arquivo de música ou metadata é enviado para servidores externos; toda a análise roda localmente.

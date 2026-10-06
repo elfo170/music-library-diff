@@ -59,6 +59,28 @@ CREATE TABLE IF NOT EXISTS scan_matches (
     track_b_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS operations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    op_type TEXT NOT NULL,
+    params_json TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    summary_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS operation_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id INTEGER NOT NULL REFERENCES operations(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    src_path TEXT,
+    dest_path TEXT,
+    status TEXT NOT NULL,
+    message TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_scan_matches_scan_id ON scan_matches(scan_id);
 CREATE INDEX IF NOT EXISTS idx_scan_matches_type ON scan_matches(scan_id, match_type);
 """
@@ -154,14 +176,10 @@ class Database:
         no scan mais recente (arquivo apagado/movido fora da aplicação).
         """
         seen = set(seen_paths)
-        with self._cursor() as cur:
-            cur.execute(
-                "SELECT path FROM file_cache WHERE path LIKE ? ESCAPE '\\'",
-                (library_root.replace("%", "\\%").replace("_", "\\_") + "%",),
-            )
-            stale = [row["path"] for row in cur.fetchall() if row["path"] not in seen]
-            if stale:
-                cur.executemany("DELETE FROM file_cache WHERE path = ?", [(p,) for p in stale])
+        stale = [r["path"] for r in self.get_cached_files_under(library_root) if r["path"] not in seen]
+        if stale:
+            with self._cursor() as cur:
+                cur.executemany("DELETE FROM file_cache WHERE path = ?", [(x,) for x in stale])
 
     # ---------- scans / scan_matches ----------
 
@@ -218,13 +236,100 @@ class Database:
             rows = cur.fetchall()
 
         return [
-            {
-                "match_type": row["match_type"],
-                "track_a": json.loads(row["track_a_json"]) if row["track_a_json"] else None,
-                "track_b": json.loads(row["track_b_json"]) if row["track_b_json"] else None,
-            }
+            self._match_row_to_dict(row)
             for row in rows
         ]
+
+    @staticmethod
+    def _match_row_to_dict(row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "match_type": row["match_type"],
+            "track_a": json.loads(row["track_a_json"]) if row["track_a_json"] else None,
+            "track_b": json.loads(row["track_b_json"]) if row["track_b_json"] else None,
+        }
+
+    def get_match(self, scan_id: int, match_id: int) -> Optional[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM scan_matches WHERE scan_id = ? AND id = ?", (scan_id, match_id)
+            )
+            row = cur.fetchone()
+        return self._match_row_to_dict(row) if row else None
+
+    def replace_matches(self, scan_id: int, matches: Iterable[Match]) -> None:
+        """Substitui todos os resultados de uma análise (usado após operações CRTD)."""
+        rows = [
+            (
+                scan_id,
+                m.match_type,
+                json.dumps(m.track_a.to_dict()) if m.track_a else None,
+                json.dumps(m.track_b.to_dict()) if m.track_b else None,
+            )
+            for m in matches
+        ]
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM scan_matches WHERE scan_id = ?", (scan_id,))
+            cur.executemany(
+                "INSERT INTO scan_matches (scan_id, match_type, track_a_json, track_b_json) "
+                "VALUES (?, ?, ?, ?)",
+                rows,
+            )
+
+    def update_scan_summary(self, scan_id: int, summary: Dict[str, Any]) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE scans SET summary_json = ? WHERE id = ?", (json.dumps(summary), scan_id)
+            )
+
+    # ---------- cache: consultas usadas pelas operações ----------
+
+    def get_cached_files_under(self, library_root: str) -> List[Dict[str, Any]]:
+        like = library_root.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM file_cache WHERE path LIKE ? ESCAPE '\\'", (like,))
+            return [dict(r) for r in cur.fetchall()]
+
+    def delete_cached_file(self, path: str) -> None:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM file_cache WHERE path = ?", (path,))
+
+    # ---------- operations (log das operações CRTD) ----------
+
+    def create_operation(self, scan_id: int, op_type: str, params: Dict[str, Any]) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO operations (scan_id, op_type, params_json, started_at, status) "
+                "VALUES (?, ?, ?, ?, 'running')",
+                (scan_id, op_type, json.dumps(params), datetime.now(timezone.utc).isoformat()),
+            )
+            return cur.lastrowid
+
+    def add_operation_item(
+        self, operation_id: int, action: str, src_path: Optional[str],
+        dest_path: Optional[str], status: str, message: str,
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO operation_items (operation_id, action, src_path, dest_path, status, "
+                "message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (operation_id, action, src_path, dest_path, status, message,
+                 datetime.now(timezone.utc).isoformat()),
+            )
+
+    def finish_operation(self, operation_id: int, status: str, summary: Dict[str, Any]) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE operations SET finished_at = ?, status = ?, summary_json = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), status, json.dumps(summary), operation_id),
+            )
+
+    def get_operation_items(self, operation_id: int) -> List[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM operation_items WHERE operation_id = ? ORDER BY id", (operation_id,)
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def close(self) -> None:
         self._conn.close()

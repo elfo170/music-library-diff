@@ -39,6 +39,16 @@ class TrackInfo:
     bit_depth: Optional[int] = None
     error: Optional[str] = None
 
+    @classmethod
+    def from_cache_row(cls, row: Dict[str, Any], library: str) -> "TrackInfo":
+        return cls(
+            path=row["path"], library=library, size=row["size"], mtime=row["mtime"],
+            file_hash=row["hash"], artist=row["artist"], title=row["title"],
+            album=row["album"], album_artist=row["album_artist"], duration=row["duration"],
+            format=row["format"], bitrate=row["bitrate"], sample_rate=row["sample_rate"],
+            bit_depth=row["bit_depth"], error=row["error"],
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "path": self.path,

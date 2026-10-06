@@ -70,6 +70,12 @@ class ScanManager:
     def get_matches(self, scan_id: int, match_type: Optional[str] = None) -> List[Dict[str, Any]]:
         return self._db.get_matches(scan_id, match_type)
 
+    def set_summary(self, scan_id: int, summary: Dict[str, int]) -> None:
+        """Atualiza o resumo em memória (usado após operações CRTD)."""
+        with self._lock:
+            if scan_id in self._progress:
+                self._progress[scan_id].summary = summary
+
     def _set_progress(self, scan_id: int, **kwargs) -> None:
         with self._lock:
             progress = self._progress[scan_id]
